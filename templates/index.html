@@ -1,10 +1,59 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Dynamic ASL Detection</title>
+    <title>ASL Helping Tool</title>
 </head>
 <body>
-    <h1>Dynamic American Sign Language Recognition</h1>
+    <h1>ASL Helping Tool</h1>
+
     <img src="{{ url_for('video_feed') }}" width="720">
+
+    <h2>Detected Sentence:</h2>
+
+    <textarea id="sentenceBox" rows="4" cols="60"></textarea>
+    <br><br>
+
+    <button onclick="translateText()">Translate</button>
+    <button onclick="speakText()">Speak</button>
+
+    <h3>Translations:</h3>
+    <p id="translations"></p>
+
+    <script>
+        // Update textarea with detected sentence
+        setInterval(() => {
+            fetch("/predict")
+                .then(res => res.json())
+                .then(data => {
+                    document.getElementById("sentenceBox").value = data.sentence;
+                });
+        }, 1000);
+
+        function translateText() {
+            const text = document.getElementById("sentenceBox").value;
+
+            fetch("/translate", {
+                method: "POST",
+                headers: {"Content-Type": "application/json"},
+                body: JSON.stringify({ text: text })
+            })
+            .then(res => res.json())
+            .then(data => {
+                document.getElementById("translations").innerHTML =
+                    "Hindi: " + data.hindi + "<br>" +
+                    "Telugu: " + data.telugu;
+            });
+        }
+
+        function speakText() {
+            const text = document.getElementById("sentenceBox").value;
+
+            fetch("/speak", {
+                method: "POST",
+                headers: {"Content-Type": "application/json"},
+                body: JSON.stringify({ text: text })
+            });
+        }
+    </script>
 </body>
 </html>

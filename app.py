@@ -4,15 +4,22 @@ import mediapipe as mp
 import numpy as np
 from tensorflow.keras.models import load_model
 from collections import deque
+from translator import translate_sentence
+from tts import speak
+from flask import jsonify
+from flask import request
+
 sentence_buffer = []
 last_word = None
+currentword=""
 app = Flask(__name__)
-
+final_sentence=""
 # Load trained Bi-LSTM model
 model = load_model("dynamic_sign_bilstm_model_9.h5")
 
 # Label mapping (must match training order)
 gesture_labels = ["A","B","C","D","E","F","G","H","I","J","K","L","M","N","O","P","Q","R","S","T","U","V","W","X","Y","Z"]
+
 
 # MediaPipe Hands
 mp_hands = mp.solutions.hands
@@ -66,16 +73,46 @@ def generate_frames():
                 prediction = model.predict(input_sequence, verbose=0)[0]
                 predicted_class = np.argmax(prediction)
                 predicted_label = gesture_labels[predicted_class]
+                confidence = np.max(prediction)
 
-                cv2.putText(
-                    frame,
-                    f"Gesture: {predicted_label}",
-                    (10, 50),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    1.2,
-                    (0, 255, 0),
-                    3
-                )
+                if confidence > 0.8:
+                    global last_word, currentword, sentence_buffer, final_sentence
+
+                    if predicted_label != last_word:
+
+                        # If GAP → complete word
+                        if predicted_label == "Y":
+                            if currentword != "":
+                                sentence_buffer.append(currentword)
+                                currentword = ""
+
+                        # If END → complete sentence
+                        elif predicted_label == "A":
+                            if currentword != "":
+                                sentence_buffer.append(currentword)
+                                currentword = ""
+
+                            full_sentence = " ".join(sentence_buffer)
+                            final_sentence = full_sentence
+                            print("Final Sentence:", full_sentence)
+
+                            sentence_buffer.clear()
+
+                        # Otherwise → alphabet letter
+                        else:
+                            currentword += predicted_label
+
+                        last_word = predicted_label
+
+                    cv2.putText(
+                        frame,
+                        f"Gesture: {predicted_label}",
+                        (10, 50),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        1.2,
+                        (0, 255, 0),
+                        3
+                    )
 
         ret, buffer = cv2.imencode(".jpg", frame)
         frame = buffer.tobytes()
@@ -91,6 +128,30 @@ def index():
 def video_feed():
     return Response(generate_frames(),
                     mimetype="multipart/x-mixed-replace; boundary=frame")
+
+@app.route("/predict")
+def predict():
+    return jsonify({
+        "sentence": final_sentence
+    })
+
+@app.route("/translate", methods=["POST"])
+def translate():
+    data = request.get_json()
+    text = data["text"]
+
+    translations = translate_sentence(text)
+
+    return jsonify(translations)
+
+
+@app.route("/speak", methods=["POST"])
+def speak_route():
+    data = request.get_json()
+    text = data["text"]
+    speak(text)
+    return jsonify({"status": "spoken"})
+
 
 if __name__ == "__main__":
     app.run(debug=True)
