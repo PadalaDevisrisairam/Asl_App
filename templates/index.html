@@ -1,59 +1,185 @@
 <!DOCTYPE html>
 <html>
+
 <head>
     <title>ASL Helping Tool</title>
+
+    <style>
+        body {
+            margin: 0;
+            font-family: Arial, sans-serif;
+            background-color: #f4f6f9;
+        }
+
+        h1 {
+            text-align: center;
+            padding: 15px;
+            background-color: #2c3e50;
+            color: white;
+            margin: 0;
+        }
+
+        .container {
+            display: flex;
+            height: calc(100vh - 70px);
+        }
+
+        /* LEFT SIDE (VIDEO) */
+        .left {
+            flex: 2;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background-color: #000;
+        }
+
+        .left img {
+            width: 90%;
+            border-radius: 10px;
+            border: 3px solid #2c3e50;
+        }
+
+        /* RIGHT SIDE (CONTROLS) */
+        .right {
+            flex: 1;
+            padding: 20px;
+            background-color: white;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+            box-shadow: -2px 0 10px rgba(0,0,0,0.1);
+        }
+
+        textarea {
+            width: 100%;
+            height: 100px;
+            font-size: 16px;
+            padding: 10px;
+            border-radius: 8px;
+            border: 1px solid #ccc;
+            resize: none;
+        }
+
+        button {
+            padding: 12px;
+            font-size: 16px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: 0.3s;
+        }
+
+        .translate-btn {
+            background-color: #3498db;
+            color: white;
+        }
+
+        .translate-btn:hover {
+            background-color: #2980b9;
+        }
+
+        .speak-btn {
+            background-color: #27ae60;
+            color: white;
+        }
+
+        .speak-btn:hover {
+            background-color: #1e8449;
+        }
+
+        .translations {
+            background-color: #f8f9fa;
+            padding: 10px;
+            border-radius: 8px;
+            border: 1px solid #ddd;
+            min-height: 100px;
+        }
+    </style>
 </head>
+
 <body>
+
     <h1>ASL Helping Tool</h1>
 
-    <img src="{{ url_for('video_feed') }}" width="720">
+    <div class="container">
 
-    <h2>Detected Sentence:</h2>
+        <!-- LEFT SIDE -->
+        <div class="left">
+            <img src="{{ url_for('video_feed') }}">
+        </div>
 
-    <textarea id="sentenceBox" rows="4" cols="60"></textarea>
-    <br><br>
+        <!-- RIGHT SIDE -->
+        <div class="right">
 
-    <button onclick="translateText()">Translate</button>
-    <button onclick="speakText()">Speak</button>
+            <h3>Detected Sentence</h3>
+            <textarea id="sentenceBox"></textarea>
 
-    <h3>Translations:</h3>
-    <p id="translations"></p>
+            <button class="translate-btn" onclick="translateText()">Translate</button>
+            <button class="speak-btn" onclick="speakText()">Speak</button>
+
+            <h3>Translations</h3>
+            <div id="translations" class="translations"></div>
+
+        </div>
+
+    </div>
 
     <script>
-        // Update textarea with detected sentence
+        let lastSentence = "";
+        let isEditing = false;
+
+        const sentenceBox = document.getElementById("sentenceBox");
+
+        sentenceBox.addEventListener("focus", () => {
+            isEditing = true;
+        });
+
+        sentenceBox.addEventListener("blur", () => {
+            isEditing = false;
+        });
+
         setInterval(() => {
-            fetch("/predict")
-                .then(res => res.json())
-                .then(data => {
-                    document.getElementById("sentenceBox").value = data.sentence;
-                });
-        }, 1000);
+            if (!isEditing) {
+                fetch("/predict")
+                    .then(res => res.json())
+                    .then(data => {
+                        if (data.sentence !== lastSentence) {
+                            sentenceBox.value = data.sentence;
+                            lastSentence = data.sentence;
+                        }
+                    });
+            }
+        }, 200);
 
         function translateText() {
-            const text = document.getElementById("sentenceBox").value;
+            const text = sentenceBox.value;
 
             fetch("/translate", {
                 method: "POST",
-                headers: {"Content-Type": "application/json"},
+                headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ text: text })
             })
             .then(res => res.json())
             .then(data => {
                 document.getElementById("translations").innerHTML =
-                    "Hindi: " + data.hindi + "<br>" +
-                    "Telugu: " + data.telugu;
+                    "<b>Hindi:</b> " + data.hindi + "<br>" +
+                    "<b>Telugu:</b> " + data.telugu + "<br>" +
+                    "<b>Tamil:</b> " + data.tamil + "<br>" +
+                    "<b>Kannada:</b> " + data.kannada;
             });
         }
 
         function speakText() {
-            const text = document.getElementById("sentenceBox").value;
+            const text = sentenceBox.value;
+            if (!text) return;
 
-            fetch("/speak", {
-                method: "POST",
-                headers: {"Content-Type": "application/json"},
-                body: JSON.stringify({ text: text })
-            });
+            const speech = new SpeechSynthesisUtterance(text);
+            speech.lang = "en-US";
+
+            window.speechSynthesis.cancel();
+            window.speechSynthesis.speak(speech);
         }
     </script>
+
 </body>
 </html>

@@ -39,6 +39,7 @@ frame_buffer = deque(maxlen=sequence_length)
 cap = cv2.VideoCapture(0)
 
 def generate_frames():
+    global last_word
     while True:
         ret, frame = cap.read()
         if not ret:
@@ -80,27 +81,11 @@ def generate_frames():
 
                     if predicted_label != last_word:
 
-                        # If GAP → complete word
-                        if predicted_label == "Y":
-                            if currentword != "":
-                                sentence_buffer.append(currentword)
-                                currentword = ""
-
-                        # If END → complete sentence
-                        elif predicted_label == "A":
-                            if currentword != "":
-                                sentence_buffer.append(currentword)
-                                currentword = ""
-
-                            full_sentence = " ".join(sentence_buffer)
-                            final_sentence = full_sentence
-                            print("Final Sentence:", full_sentence)
-
-                            sentence_buffer.clear()
-
                         # Otherwise → alphabet letter
-                        else:
-                            currentword += predicted_label
+                        currentword += predicted_label
+
+                        # Update live prompt
+                        final_sentence = " ".join(sentence_buffer + ([currentword] if currentword else []))
 
                         last_word = predicted_label
 
@@ -113,6 +98,9 @@ def generate_frames():
                         (0, 255, 0),
                         3
                     )
+        else:
+            if last_word is not None:
+                last_word = None
 
         ret, buffer = cv2.imencode(".jpg", frame)
         frame = buffer.tobytes()
