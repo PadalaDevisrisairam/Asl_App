@@ -179,6 +179,10 @@
             window.speechSynthesis.cancel();
             window.speechSynthesis.speak(speech);
         }
+        window.onload = function () {
+    document.getElementById("sentenceBox").value = "";
+    fetch("/reset");
+};
     </script>
 
 </body>

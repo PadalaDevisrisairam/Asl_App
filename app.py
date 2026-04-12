@@ -1,27 +1,33 @@
-from flask import Flask, Response, render_template
+from flask import Flask, Response, render_template, jsonify, request
 import cv2
 import mediapipe as mp
 import numpy as np
 from tensorflow.keras.models import load_model
-from collections import deque
+from collections import deque, Counter
+
 from translator import translate_sentence
 from tts import speak
-from flask import jsonify
-from flask import request
 
-sentence_buffer = []
-last_word = None
-currentword=""
+# ---------------- GLOBAL VARIABLES ----------------
+currentword = ""
+final_sentence = ""
+
+prediction_buffer = []
+hand_present = False  # IMPORTANT
+
+# Flask app
 app = Flask(__name__)
-final_sentence=""
-# Load trained Bi-LSTM model
-model = load_model("dynamic_sign_bilstm_model_9.h5")
 
-# Label mapping (must match training order)
-gesture_labels = ["A","B","C","D","E","F","G","H","I","J","K","L","M","N","O","P","Q","R","S","T","U","V","W","X","Y","Z"]
+# ---------------- LOAD MODEL ----------------
+model = load_model("addedtrail1-atozspacedelete.h5")
 
+# Label mapping
+gesture_labels = [
+    "A","B","C","D","DELETE","E","F","G","H","I","J","K","L","M",
+    "N","O","P","Q","R","S","SPACE","T","U","V","W","X","Y","Z"
+]
 
-# MediaPipe Hands
+# ---------------- MEDIAPIPE ----------------
 mp_hands = mp.solutions.hands
 hands = mp_hands.Hands(
     static_image_mode=False,
@@ -31,15 +37,17 @@ hands = mp_hands.Hands(
 )
 mp_draw = mp.solutions.drawing_utils
 
-# Parameters
+# ---------------- PARAMETERS ----------------
 sequence_length = 30
 frame_buffer = deque(maxlen=sequence_length)
 
 # Webcam
 cap = cv2.VideoCapture(0)
 
+# ---------------- FRAME GENERATOR ----------------
 def generate_frames():
-    global last_word
+    global prediction_buffer, currentword, final_sentence, hand_present
+
     while True:
         ret, frame = cap.read()
         if not ret:
@@ -48,20 +56,25 @@ def generate_frames():
         img_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         results = hands.process(img_rgb)
 
+        # ================= HAND DETECTED =================
         if results.multi_hand_landmarks:
+
+            # NEW gesture started
+            if not hand_present:
+                prediction_buffer.clear()
+                hand_present = True
+
             hand_landmarks = results.multi_hand_landmarks[0]
             mp_draw.draw_landmarks(frame, hand_landmarks, mp_hands.HAND_CONNECTIONS)
 
-            # -------- FEATURE EXTRACTION (64 FEATURES) --------
+            # -------- FEATURE EXTRACTION --------
             landmarks = np.array([[lm.x, lm.y, lm.z] for lm in hand_landmarks.landmark])
 
-            # Normalize (wrist origin + scale)
             landmarks = landmarks - landmarks[0]
             scale = np.linalg.norm(landmarks)
             if scale > 0:
                 landmarks = landmarks / scale
 
-            # Finger distance (index 8, middle 12)
             dist_8_12 = np.linalg.norm(landmarks[8] - landmarks[12])
 
             features = landmarks.flatten().tolist()
@@ -72,42 +85,62 @@ def generate_frames():
             if len(frame_buffer) == sequence_length:
                 input_sequence = np.array(frame_buffer).reshape(1, sequence_length, 64)
                 prediction = model.predict(input_sequence, verbose=0)[0]
+
+                confidence = np.max(prediction)
                 predicted_class = np.argmax(prediction)
                 predicted_label = gesture_labels[predicted_class]
-                confidence = np.max(prediction)
 
                 if confidence > 0.8:
-                    global last_word, currentword, sentence_buffer, final_sentence
+                    prediction_buffer.append(predicted_label)
 
-                    if predicted_label != last_word:
+                # Show live prediction
+                cv2.putText(
+                    frame,
+                    f"Gesture: {predicted_label}",
+                    (10, 50),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    1.2,
+                    (0, 255, 0),
+                    3
+                )
 
-                        # Otherwise → alphabet letter
-                        currentword += predicted_label
-
-                        # Update live prompt
-                        final_sentence = " ".join(sentence_buffer + ([currentword] if currentword else []))
-
-                        last_word = predicted_label
-
-                    cv2.putText(
-                        frame,
-                        f"Gesture: {predicted_label}",
-                        (10, 50),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        1.2,
-                        (0, 255, 0),
-                        3
-                    )
+        # ================= HAND REMOVED =================
         else:
-            if last_word is not None:
-                last_word = None
+            if hand_present:
+                # Gesture finished → finalize letter
 
+                if prediction_buffer:
+                    most_common, count = Counter(prediction_buffer).most_common(1)[0]
+
+                    if count >= 5:  # threshold to remove noise
+    # -------- HANDLE SPECIAL SIGNS --------
+                        if most_common == "SPACE":
+                            currentword += " "
+
+                        elif most_common == "DELETE":
+                            currentword = currentword[:-1]  # remove last char
+
+                        else:
+                            currentword += most_common
+
+    # Update final sentence
+                        final_sentence = currentword
+                        print("Final Letter:", most_common)
+
+                        
+
+                # Reset for next gesture
+                prediction_buffer.clear()
+                hand_present = False
+
+        # -------- STREAM FRAME --------
         ret, buffer = cv2.imencode(".jpg", frame)
         frame = buffer.tobytes()
 
         yield (b"--frame\r\n"
                b"Content-Type: image/jpeg\r\n\r\n" + frame + b"\r\n")
 
+# ---------------- ROUTES ----------------
 @app.route("/")
 def index():
     return render_template("index.html")
@@ -132,7 +165,6 @@ def translate():
 
     return jsonify(translations)
 
-
 @app.route("/speak", methods=["POST"])
 def speak_route():
     data = request.get_json()
@@ -140,6 +172,17 @@ def speak_route():
     speak(text)
     return jsonify({"status": "spoken"})
 
+@app.route("/reset")
+def reset():
+    global currentword, final_sentence, prediction_buffer
 
+    currentword = ""
+    final_sentence = ""
+    prediction_buffer.clear()
+
+    return jsonify({"status": "reset"})
+
+# ---------------- RUN ----------------
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run(debug=True) 
+    
