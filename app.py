@@ -3,7 +3,7 @@ import cv2
 import mediapipe as mp
 import numpy as np
 from tensorflow.keras.models import load_model
-from collections import deque, Counter
+from collections import deque
 
 from translator import translate_sentence
 from tts import speak
@@ -11,9 +11,8 @@ from tts import speak
 # ---------------- GLOBAL VARIABLES ----------------
 currentword = ""
 final_sentence = ""
-
-prediction_buffer = []
-hand_present = False  # IMPORTANT
+last_prediction = None
+hand_present = False
 
 # Flask app
 app = Flask(__name__)
@@ -46,7 +45,7 @@ cap = cv2.VideoCapture(0)
 
 # ---------------- FRAME GENERATOR ----------------
 def generate_frames():
-    global prediction_buffer, currentword, final_sentence, hand_present
+    global currentword, final_sentence, hand_present, last_prediction
 
     while True:
         ret, frame = cap.read()
@@ -59,10 +58,9 @@ def generate_frames():
         # ================= HAND DETECTED =================
         if results.multi_hand_landmarks:
 
-            # NEW gesture started
             if not hand_present:
-                prediction_buffer.clear()
                 hand_present = True
+                last_prediction = None  # reset for new gesture
 
             hand_landmarks = results.multi_hand_landmarks[0]
             mp_draw.draw_landmarks(frame, hand_landmarks, mp_hands.HAND_CONNECTIONS)
@@ -90,10 +88,11 @@ def generate_frames():
                 predicted_class = np.argmax(prediction)
                 predicted_label = gesture_labels[predicted_class]
 
+                # Save ONLY last stable prediction
                 if confidence > 0.8:
-                    prediction_buffer.append(predicted_label)
+                    last_prediction = predicted_label
 
-                # Show live prediction
+                # Display live prediction
                 cv2.putText(
                     frame,
                     f"Gesture: {predicted_label}",
@@ -107,30 +106,25 @@ def generate_frames():
         # ================= HAND REMOVED =================
         else:
             if hand_present:
-                # Gesture finished → finalize letter
+                # Finalize gesture when hand removed
 
-                if prediction_buffer:
-                    most_common, count = Counter(prediction_buffer).most_common(1)[0]
+                if last_prediction is not None:
+                    print("Final Gesture:", last_prediction)
 
-                    if count >= 5:  # threshold to remove noise
-    # -------- HANDLE SPECIAL SIGNS --------
-                        if most_common == "SPACE":
-                            currentword += " "
+                    # -------- HANDLE SPECIAL SIGNS --------
+                    if last_prediction == "SPACE":
+                        currentword += " "
 
-                        elif most_common == "DELETE":
-                            currentword = currentword[:-1]  # remove last char
+                    elif last_prediction == "DELETE":
+                        currentword = currentword[:-1]
 
-                        else:
-                            currentword += most_common
+                    else:
+                        currentword += last_prediction
 
-    # Update final sentence
-                        final_sentence = currentword
-                        print("Final Letter:", most_common)
-
-                        
+                    final_sentence = currentword
 
                 # Reset for next gesture
-                prediction_buffer.clear()
+                last_prediction = None
                 hand_present = False
 
         # -------- STREAM FRAME --------
@@ -174,15 +168,14 @@ def speak_route():
 
 @app.route("/reset")
 def reset():
-    global currentword, final_sentence, prediction_buffer
+    global currentword, final_sentence, last_prediction
 
     currentword = ""
     final_sentence = ""
-    prediction_buffer.clear()
+    last_prediction = None
 
     return jsonify({"status": "reset"})
 
 # ---------------- RUN ----------------
 if __name__ == "__main__":
-    app.run(debug=True) 
-    
+    app.run(debug=True)
